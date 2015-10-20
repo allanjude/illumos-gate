@@ -559,6 +559,9 @@ extern void
 dmu_buf_init_user(dmu_buf_user_t *dbu, dmu_buf_evict_func_t *evict_func,
     dmu_buf_t **clear_on_evict_dbufp);
 #else /* __lint */
+extern inline void dmu_buf_init_user(dmu_buf_user_t *dbu,
+    dmu_buf_evict_func_t *evict_func, dmu_buf_t **clear_on_evict_dbufp);
+
 inline void
 dmu_buf_init_user(dmu_buf_user_t *dbu, dmu_buf_evict_func_t *evict_func,
     dmu_buf_t **clear_on_evict_dbufp)
