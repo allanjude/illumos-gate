@@ -26,6 +26,7 @@
  * Copyright (c) 2012, Joyent, Inc. All rights reserved.
  * Copyright (c) 2013 Steven Hartland.  All rights reserved.
  * Copyright 2013 Nexenta Systems, Inc.  All rights reserved.
+ * Copyright (c) 2015 Allan Jude <allanjude@FreeBSD.org>. All rights reserved.
  */
 
 #include <assert.h>
@@ -122,7 +123,7 @@ _umem_logging_init(void)
 #endif
 
 typedef enum {
-        HELP_API,
+	HELP_API,
 	HELP_CLONE,
 	HELP_CREATE,
 	HELP_DESTROY,
@@ -168,7 +169,8 @@ typedef struct zfs_command {
  * the generic usage message.
  */
 static zfs_command_t command_table[] = {
-        { "api",        zfs_do_api,             HELP_API                },
+	{ "api",        zfs_do_api,             HELP_API                },
+	{ NULL },
 	{ "create",	zfs_do_create,		HELP_CREATE		},
 	{ "destroy",	zfs_do_destroy,		HELP_DESTROY		},
 	{ NULL },
@@ -210,12 +212,53 @@ static zfs_command_t command_table[] = {
 
 zfs_command_t *current_command;
 
+typedef enum {
+	API_COL_NONE,
+	API_COL_CMD,
+	API_COL_SWITCH,
+	API_COL_FLAG,
+	API_COL_DESC,
+	/* Leave this entry last */
+	API_NUM_COL
+} zfs_api_column_t;
+
+typedef struct api_desc {
+	const char	*col[API_NUM_COL];
+} api_item_t;
+
+/*
+ * ZFS API Table.  Each change to a ZFS command should be documented here,
+ * with the subcommand, a flag name, and a text description
+ */
+static api_item_t api_table[] = {
+	{ "", "list",		"p",	"list_parsable",
+		"zfs list output with machine parsable numbers" },
+	{ "", "send",		"e",	"send_embedded",
+		"zfs send streams with embedded blocks" },
+	{ "", "send",		"L",	"send_largeblock",
+		"zfs send streams with large blocks" },
+	{ "", "set",		"-",	"set_multiprop",
+		"zfs set multiple properties at once" },
+	{ "", "receive",	"o",	"receive_origin",
+		"receive an incremental stream as a clone" },
+	{ "", "send",		"t",	"send_resume",
+		"resume interrupted zfs send with a token" },
+	{ "", "receive",	"s",	"receive_save",
+		"zfs receive preserves failed streams for later resumption" },
+	{ "", "receive",	"A",	"receive_abort",
+		"zfs receive aborts a previously failed stream" }
+};
+
+#define	NAPI	(sizeof (api_table) / sizeof (api_table[0]))
+
 static const char *
 get_usage(zfs_help_t idx)
 {
 	switch (idx) {
-        case HELP_API:
-                return "\tapi\n";
+	case HELP_API:
+		return (gettext("\tapi [-H] [-o \"all\" | field[,...]] "
+		    "[subcommand]\n"
+		    "\tapi -x <api_flag>\n"));
 	case HELP_CLONE:
 		return (gettext("\tclone [-p] [-o property=value] ... "
 		    "<snapshot> <filesystem|volume>\n"));
@@ -589,17 +632,200 @@ finish_progress(char *done)
 /*
  * zfs api
  *
- * Print a list of zfs command changes in the form
- * [zfs command] [new-thing] [action]
+ * Print a list of zfs CLI changes
+ * 
+ * zfs api [-H] [-o all | field[,...]] [subcommand]
+ * zfs api -x <api_flag>
  *
-*/
+ * With no parameters, outputs a list of CLI changes
+ * Given an optional subcommand, only changes affecting that subcommand are
+ * listed.  The -o flag allows the user to specify the list and order of the
+ * columns in the output.
+ *
+ * The '-x' flag and a specific api_flag returns yes/no if the indicated feature
+ * is supported.  The exit code of zfs matches the text output.
+ *
+ */
 static int
 zfs_do_api(int argc, char **argv)
 {
-    printf("zfs list -p parameter added\n");
-    printf("zfs receive -s parameter added\n");
-    printf("zfs api . command added\n");
-    return 0;
+	int i, c, col, len;
+	char *flag, *value, *subcmd;
+	boolean_t scripted, first;
+	zfs_api_column_t columns[API_NUM_COL];
+	int colwidths[API_NUM_COL];
+	static char *col_subopts[] = { "command", "switch", "flag",
+		"description", "all", NULL };
+
+	scripted = B_FALSE;
+	flag = value = subcmd = NULL;
+	bzero(&columns, sizeof (columns));
+	bzero(&colwidths, sizeof (colwidths));
+
+	/*
+	 * Set up default columns
+	 */
+	columns[0] = API_COL_CMD;
+	columns[1] = API_COL_SWITCH;
+	columns[2] = API_COL_FLAG;
+	columns[3] = API_COL_DESC;
+
+	/* check options */
+	while ((c = getopt(argc, argv, "Ho:x:")) != -1) {
+		switch (c) {
+		case 'H':
+			scripted = B_TRUE;
+			break;
+		case 'o':
+			/*
+			 * Process the set of columns to display.  We zero out
+			 * the structure to give us a blank slate.
+			 */
+			bzero(&columns, sizeof (columns));
+			i = 0;
+			while (*optarg != '\0') {
+				if (i == API_NUM_COL) {
+					(void) fprintf(stderr, gettext("too "
+					    "many fields given to -o "
+					    "option\n"));
+					usage(B_FALSE);
+				}
+
+				switch (getsubopt(&optarg, col_subopts,
+				    &value)) {
+				case 0:
+					columns[i++] = API_COL_CMD;
+					break;
+				case 1:
+					columns[i++] = API_COL_SWITCH;
+					break;
+				case 2:
+					columns[i++] = API_COL_FLAG;
+					break;
+				case 3:
+					columns[i++] = API_COL_DESC;
+					break;
+				case 4:
+					if (i > 0) {
+						(void) fprintf(stderr,
+						    gettext("\"all\" conflicts "
+						    "with specific fields "
+						    "given to -o option\n"));
+						usage(B_FALSE);
+					}
+					columns[0] = API_COL_CMD;
+					columns[1] = API_COL_SWITCH;
+					columns[2] = API_COL_FLAG;
+					columns[3] = API_COL_DESC;
+					i = API_NUM_COL;
+					break;
+				default:
+					(void) fprintf(stderr,
+					    gettext("invalid column name "
+					    "'%s'\n"), value);
+					usage(B_FALSE);
+				}
+			}
+			break;
+		case 'x':
+			scripted = B_TRUE;
+			flag = strdup(optarg);
+			break;
+		case ':':
+			(void) fprintf(stderr, gettext("missing argument for "
+			    "'%c' option\n"), optopt);
+			usage(B_FALSE);
+			break;
+		case '?':
+			(void) fprintf(stderr, gettext("invalid option '%c'\n"),
+			    optopt);
+			usage(B_FALSE);
+		}
+	}
+
+	argc -= optind;
+	argv += optind;
+
+	if (argc > 0) {
+		subcmd = strdup(argv[0]);
+	}
+
+	/* Calculate column widths */
+	colwidths[API_COL_CMD] = strlen(dgettext(TEXT_DOMAIN, "COMMAND"));
+	colwidths[API_COL_SWITCH] = strlen(dgettext(TEXT_DOMAIN, "SWITCH"));
+	colwidths[API_COL_FLAG] = strlen(dgettext(TEXT_DOMAIN, "FLAG"));
+	colwidths[API_COL_DESC] = strlen(dgettext(TEXT_DOMAIN, "DESCRIPTION"));
+	for (c = 0; c < API_NUM_COL; c++) {
+		for (i = 0; i < NAPI; i++) {
+			len = strlen(api_table[i].col[columns[c]]);
+			if (len > colwidths[c])
+				colwidths[c] = len;
+		}
+	}
+	if (flag != NULL) {
+		for (i = 0; i < NAPI; i++) {
+			if (strcmp(api_table[i].col[API_COL_FLAG], flag) == 0) {
+				printf("yes\n");
+				return (0);
+			}
+		}
+		printf("no\n");
+		return (1);
+	}
+
+	if (!scripted) {
+		first = B_TRUE;
+		for (c = 0; c < API_NUM_COL; c++) {
+			if (columns[c] == API_COL_NONE)
+				break;
+			if (!first) {
+				printf("   ");
+			}
+
+			if (columns[c + 1] == API_COL_NONE) {
+				/* Last column */
+				colwidths[c] = 0;
+			}
+			switch (columns[c]) {
+			case API_COL_CMD:
+				printf("%-*s", colwidths[c], "COMMAND");
+				break;
+			case API_COL_SWITCH:
+				printf("%-*s", colwidths[c], "SWITCH");
+				break;
+			case API_COL_FLAG:
+				printf("%-*s", colwidths[c], "FLAG");
+				break;
+			case API_COL_DESC:
+				printf("%-*s", colwidths[c], "DESCRIPTION");
+				break;
+			}
+			first = B_FALSE;
+		}
+		printf("\n");
+	}
+
+	for (i = 0; i < NAPI; i++) {
+		first = B_TRUE;
+		if (subcmd != NULL &&
+		    strcmp(api_table[i].col[API_COL_CMD], subcmd) != 0)
+			continue;
+		for (c = 0; c < API_NUM_COL; c++) {
+			if (columns[c] == API_COL_NONE)
+				break;
+			if (!first) {
+				if (scripted)
+					printf("\t");
+				else
+					printf("   ");
+			}
+			printf("%-*s", colwidths[c], api_table[i].col[columns[c]]);
+			first = B_FALSE;
+		}
+		printf("\n");
+	}
+
+	return 0;
 }
 
 /*
