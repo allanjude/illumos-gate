@@ -746,22 +746,6 @@ zfs_do_api(int argc, char **argv)
 	argc -= optind;
 	argv += optind;
 
-	if (argc > 0) {
-		subcmd = strdup(argv[0]);
-	}
-
-	/* Calculate column widths */
-	colwidths[API_COL_CMD] = strlen(dgettext(TEXT_DOMAIN, "COMMAND"));
-	colwidths[API_COL_SWITCH] = strlen(dgettext(TEXT_DOMAIN, "SWITCH"));
-	colwidths[API_COL_FLAG] = strlen(dgettext(TEXT_DOMAIN, "FLAG"));
-	colwidths[API_COL_DESC] = strlen(dgettext(TEXT_DOMAIN, "DESCRIPTION"));
-	for (c = 0; c < API_NUM_COL; c++) {
-		for (i = 0; i < NAPI; i++) {
-			len = strlen(api_table[i].col[columns[c]]);
-			if (len > colwidths[c])
-				colwidths[c] = len;
-		}
-	}
 	if (flag != NULL) {
 		for (i = 0; i < NAPI; i++) {
 			if (strcmp(api_table[i].col[API_COL_FLAG], flag) == 0) {
@@ -773,19 +757,35 @@ zfs_do_api(int argc, char **argv)
 		return (1);
 	}
 
+	if (argc > 0) {
+		subcmd = strdup(argv[0]);
+	}
+
+	/* Calculate column widths */
+	colwidths[API_COL_CMD] = strlen(dgettext(TEXT_DOMAIN, "COMMAND"));
+	colwidths[API_COL_SWITCH] = strlen(dgettext(TEXT_DOMAIN, "SWITCH"));
+	colwidths[API_COL_FLAG] = strlen(dgettext(TEXT_DOMAIN, "FLAG"));
+	colwidths[API_COL_DESC] = strlen(dgettext(TEXT_DOMAIN, "DESCRIPTION"));
 	if (!scripted) {
+		for (c = 0; c < API_NUM_COL; c++) {
+			for (i = 0; i < NAPI; i++) {
+				len = strlen(api_table[i].col[columns[c]]);
+				if (len > colwidths[c])
+					colwidths[c] = len;
+			}
+		}
+
 		first = B_TRUE;
 		for (c = 0; c < API_NUM_COL; c++) {
 			if (columns[c] == API_COL_NONE)
 				break;
 			if (!first) {
-				printf("   ");
+				if (scripted)
+					printf("\t");
+				else
+					printf("   ");
 			}
 
-			if (columns[c + 1] == API_COL_NONE) {
-				/* Last column */
-				colwidths[c] = 0;
-			}
 			switch (columns[c]) {
 			case API_COL_CMD:
 				printf("%-*s", colwidths[c], "COMMAND");
@@ -799,6 +799,11 @@ zfs_do_api(int argc, char **argv)
 			case API_COL_DESC:
 				printf("%-*s", colwidths[c], "DESCRIPTION");
 				break;
+			}
+
+			if (columns[c + 1] == API_COL_NONE) {
+				/* Last column */
+				colwidths[c] = 0;
 			}
 			first = B_FALSE;
 		}
