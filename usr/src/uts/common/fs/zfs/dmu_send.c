@@ -2645,6 +2645,8 @@ receive_read_record(struct receive_arg *ra)
 			ASSERT3U(drrw->drr_logical_size, >=,
 			    drrw->drr_compressed_size);
 			ASSERT(!is_meta);
+			if (drrw->drr_compressiontype >= ZIO_COMPRESS_FUNCTIONS)
+				return (SET_ERROR(ENOTSUP));
 			abuf = arc_loan_compressed_buf(
 			    dmu_objset_spa(ra->os),
 			    drrw->drr_compressed_size, drrw->drr_logical_size,
