@@ -265,7 +265,7 @@ typedef struct dmu_replay_record {
 		} drr_write_embedded;
 
 		/*
-		 * Nore: drr_checksum is overlaid with all record types
+		 * Note: drr_checksum is overlaid with all record types
 		 * except DRR_BEGIN.  Therefore its (non-pad) members
 		 * must not overlap with members from the other structs.
 		 * We accomplish this by putting its members at the very
